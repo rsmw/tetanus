@@ -1,0 +1,9 @@
+[package]
+name = "tetanus"
+version = "0.0.1"
+description = "An unsanitary lightweight template language."
+keywords = ["markup", "template"]
+license = "MIT"
+authors = ["Mako <jlauve@rsmw.net>"]
+repository = "https://github.com/rsmw/tetanus"
+documentation = "https://docs.rs/tetanus"

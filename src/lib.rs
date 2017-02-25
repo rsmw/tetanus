@@ -1,7 +1,8 @@
 use std::str::Chars;
 use std::iter::Peekable;
 
-pub type Splice = Vec<Item>;
+#[derive(Clone, Debug, PartialEq)]
+pub struct Splice(Vec<Item>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
@@ -15,15 +16,17 @@ pub enum Item {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ParseErr {
-    TooManyRightBraces,
-    TooFewRightBraces,
+    TooManyClosingBraces,
+    TooFewClosingBraces,
 }
 
 pub fn parse(input: &str) -> Result<Splice, ParseErr> {
     let mut stream = input.chars().peekable();
     let splice = parse_splice(&mut stream)?;
     if let Some(&'}') = stream.peek() {
-        return Err(ParseErr::TooManyRightBraces);
+        return Err(ParseErr::TooManyClosingBraces);
+    } else {
+        assert_eq!(stream.next(), None);
     }
     Ok(splice)
 }
@@ -48,7 +51,7 @@ fn parse_splice(stream: &mut Stream) -> Result<Splice, ParseErr> {
                     }
                 }
 
-                let mut body = vec![];
+                let mut body = Splice(vec![]);
                 if let Some(&'{') = stream.peek() {
                     body = parse_braces(stream)?;
                 }
@@ -81,7 +84,7 @@ fn parse_splice(stream: &mut Stream) -> Result<Splice, ParseErr> {
         }
     }
 
-    Ok(items)
+    Ok(Splice(items))
 }
 
 fn parse_braces(stream: &mut Stream) -> Result<Splice, ParseErr> {
@@ -89,24 +92,60 @@ fn parse_braces(stream: &mut Stream) -> Result<Splice, ParseErr> {
     let splice = parse_splice(stream)?;
     match stream.next() {
         Some('}') => Ok(splice),
-        _ => Err(ParseErr::TooFewRightBraces),
+        _ => Err(ParseErr::TooFewClosingBraces),
+    }
+}
+
+mod display {
+    use std::fmt;
+    use super::*;
+
+    impl fmt::Display for Splice {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            for item in self.0.iter() {
+                write!(f, "{}", item)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    impl fmt::Display for Item {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self {
+                &Item::Str(ref s) => write!(f, "{}", s),
+
+                &Item::Tag { ref name, ref body } => {
+                    write!(f, "\\{}{{", name)?;
+                    for item in body.0.iter() {
+                        write!(f, "{}", item)?;
+                    }
+                    write!(f, "}}")
+                },
+
+                &Item::Braces(ref contents) => {
+                    write!(f, "{{{}}}", contents)
+                },
+            }
+        }
     }
 }
 
 #[test]
 fn no_tags() {
     let input = "This is ordinary text";
-    assert_eq!(parse(input).unwrap(), vec![Item::Str(input.to_owned())]);
+    let output = Splice(vec![Item::Str(input.to_owned())]);
+    assert_eq!(parse(input).unwrap(), output);
 }
 
 #[test]
 fn nested_braces() {
     let mut input = "Enclosed".to_owned();
-    let mut output = vec![Item::Str(input.clone())];
+    let mut output = Splice(vec![Item::Str(input.clone())]);
 
     for _ in 0 .. 100 {
         input = format!("{{{}}}", input);
-        output = vec![Item::Braces(output)];
+        output = Splice(vec![Item::Braces(output)]);
         assert_eq!(parse(&input).unwrap(), output);
     }
 }
@@ -114,45 +153,52 @@ fn nested_braces() {
 #[test]
 fn empty_tag() {
     let text = "\\test{}";
-    assert_eq!(parse(text).unwrap(), vec!{
+    assert_eq!(parse(text).unwrap(), Splice(vec!{
         Item::Tag {
             name: "test".into(),
-            body: vec![],
+            body: Splice(vec![]),
         },
-    });
+    }));
 }
 
 #[test]
 fn nested_braces_and_tags() {
     let input = "\\b{\\i{\\o{\\u{Have you read your \\book today?}}}}";
-    let output = vec!{
+
+    let mut output = Splice(vec!{
+        Item::Str("Have you read your ".to_owned()),
         Item::Tag {
-            name: "b".to_owned(),
-            body: vec!{
-                Item::Tag {
-                    name: "i".to_owned(),
-                    body: vec!{
-                        Item::Tag {
-                            name: "o".to_owned(),
-                            body: vec!{
-                                Item::Tag {
-                                    name: "u".to_owned(),
-                                    body: vec!{
-                                        Item::Str("Have you read your ".into()),
-                                        Item::Tag {
-                                            name: "book".to_owned(),
-                                            body: vec![],
-                                        },
-                                        Item::Str(" today?".to_owned()),
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
+            name: "book".to_owned(),
+            body: Splice(vec![]),
         },
-    };
+        Item::Str(" today?".to_owned()),
+    });
+
+    for &name in &["u", "o", "i", "b"] {
+        output = Splice(vec!{
+            Item::Tag {
+                name: name.to_owned(),
+                body: output,
+            },
+        });
+    }
 
     assert_eq!(parse(input).unwrap(), output);
+}
+
+#[test]
+fn fmt_round_trip() {
+    let inputs = vec!{
+        "\\q{Surrounded by \\q{quotation marks!}}",
+        "This is ordinary text containing no markup",
+        "\\defun{\\greet{} \\print{Hello, world}}",
+
+        // Don't test these -- \foo and \foo{} have the same representation
+        //"\\hello\\world",
+    };
+
+    for input in inputs {
+        let output = parse(input).unwrap();
+        assert_eq!(&format!("{}", output), input);
+    }
 }
